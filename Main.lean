@@ -239,7 +239,7 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
         let patchConsts ← getDepConstsEnv lemmEnv Lean4Less.patchConsts overrides
         let (kenv, aborted) ← replay (Lean4Less.addDecl (opts := opts)) {newConstants := patchConsts, opts := {}, overrides} (← mkEmptyEnvironment).toKernelEnv (printProgress := true) (op := "patch") (aborted := aborted)
         let env := updateBaseAfterKernelAdd lemmEnv kenv
-        mkMod #[] env patchPreludeModName
+        -- mkMod #[] env patchPreludeModName
 
         let (aborted, count) ← forEachModule' m (← mkEmptyEnvironment) (aborted := aborted) (fun n imports constMap env aborted => do
             if abortedMods.contains n then
@@ -308,7 +308,7 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
               #[{module := patchPreludeModName}] ++ imports
             else
               imports
-          mkMod imports newEnv m
+          -- mkMod imports newEnv m
 
           pure (newEnv, aborted))
           fun aborted s => do

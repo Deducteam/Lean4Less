@@ -140,30 +140,6 @@ def checkPrimitiveInductive (env : Kernel.Environment) (lparams : List Name) (np
       ⟨``Nat.succ, .forallE _ (.const ``Nat []) (.const ``Nat []) _⟩
     ] := type.ctors | fail
   | ``String =>
-    let [⟨``String.mk,
-      .forallE _ (.app (.const ``List [.zero]) (.const ``Char [])) (.const ``String []) _
-    ⟩] := type.ctors | fail
-    M.run env (safety := .safe) (lctx := {}) (const := type.name) opts do
-      -- We need the following definitions for `strLitToConstructor` to work:
-      -- Nat : Type (this is primitive so checking for existence suffices)
-      let nat := .const ``Nat []
-      unless env.constants.contains ``Nat do fail
-      -- Char : Type
-      let char := .const ``Char []
-      _ ← TypeChecker.ensureType char.toPExpr lparams
-      -- List Char : Type
-      let listchar := mkApp (.const ``List [.zero]) char
-      _ ← TypeChecker.ensureType listchar.toPExpr lparams
-      -- @List.nil.{0} Char : List Char
-      let listNil := .app (.const ``List.nil [.zero]) char
-      unless ← defEq (← TypeChecker.checkPure listNil []) listchar do fail
-      -- @List.cons.{0} Char : List Char
-      let listCons := .app (.const ``List.cons [.zero]) char
-      unless ← defEq (← TypeChecker.checkPure listCons [])
-        (arrow char (arrow listchar listchar)) do fail
-      -- String.mk : List Char → String (already checked)
-      -- @Char.ofNat : Nat → Char
-      let charOfNat := .const ``Char.ofNat []
-      unless ← defEq (← TypeChecker.checkPure charOfNat []) (arrow nat char) do fail
+    return false
   | _ => return false
   return true
