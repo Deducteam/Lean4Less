@@ -7,7 +7,19 @@ namespace L4L
 
 universe u v
 
-axiom prfIrrel {P : Prop} (p q : P) : Eq p q
+theorem propEqTrue (P : Prop) (p : P) : Eq P True := by
+  apply propext
+  apply Iff.intro <;> intro
+  trivial
+  exact p
+
+theorem prfIrrel {P : Prop} (p q : P) : Eq p q := by
+  have this := propEqTrue P p -- this : P = True
+  subst this
+  -- elimnates `p : True` and `q : True` to `True.intro`
+  cases p
+  cases q
+  rfl
 
 /- --- --- bootstrapping lemmas --- --- -/
 
