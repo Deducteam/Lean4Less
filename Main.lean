@@ -228,14 +228,12 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
         --   IO.FS.writeFile abortedFile abortedTxt
         --   saveModuleData modPath n mod
         let mkMod imports env m := do
-          let mut newEnv := env
-          let newHeader := {newEnv.header with imports}
-          newEnv := updateEnvHeader newEnv newHeader
+          let newEnv := updateEnvHeader env (updateEnvHeaderImports env.header imports)
           let modPath := (modToFilePath outDir m "olean")
           let some modParent := modPath.parent | throw $ IO.userError s!"could not find parent dir of module {m}"
           IO.FS.createDirAll modParent
-          let data ← mkModuleData env
-          saveModuleData modPath env.mainModule data
+          let data ← mkModuleData newEnv
+          saveModuleData modPath newEnv.mainModule data
 
         IO.println s!">>init module"
         let patchConsts ← getDepConstsEnv lemmEnv Lean4Less.patchConsts overrides

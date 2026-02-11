@@ -43,10 +43,10 @@ unsafe def withPatchDefs (f : Environment → IO α) : IO α := do
   f patchEnv
 
 def ppConst (env : Kernel.Environment) (n : Name) : IO Unit := do
-  let options := default
-  let options := KVMap.set options `pp.proofs true
-  let options := KVMap.set options `pp.explicit true
-  let options := KVMap.set options `pp.funBinderTypes true
+  let options : Options := default
+  let options := options.set `pp.proofs true
+  let options := options.set `pp.explicit true
+  let options := options.set `pp.funBinderTypes true
   let some info := env.find? n | unreachable!
   try
     IO.print s!"patched {info.name}: {← (PrettyPrinter.ppExprLegacy (Environment.ofKernelEnv env) default default options info.type)}"
