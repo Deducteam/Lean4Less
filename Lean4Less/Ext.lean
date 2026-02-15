@@ -101,6 +101,7 @@ structure TypeCheckerOpts where
   proofIrrelevance := true
   kLikeReduction := true
   structLikeReduction := true
+  bignum := true
 
 inductive CallData where
 |  isDefEqCore : PExpr → PExpr → CallData
@@ -191,3 +192,19 @@ def replaceParams (meth : ExtMethodsR m) (fType : Expr) (params : Array Expr) (n
 
 @[inline] def withEqFVar [MonadWithReaderOf (Std.HashMap (FVarId × FVarId) FVarDataE) m] (idt ids : FVarId) (eq : FVarDataE) (x : m α) : m α :=
   withReader (fun l => l.insert (idt, ids) eq) x
+
+def bignumAxPrefix := "bignum_"
+def getBignumAxName (n : Nat) : Name := (bignumAxPrefix ++ toString n).toName
+def getBignumFromAxName? (n : Name) : Option Nat :=
+  let n := n.toString
+  if h : n.length > bignumAxPrefix.length then
+    let pref := (n.sliceTo ⟨⟨bignumAxPrefix.length⟩, sorry⟩).toString
+    if pref == bignumAxPrefix then
+      String.toNat? (n.sliceFrom ⟨⟨bignumAxPrefix.length⟩, sorry⟩).toString
+    else
+      none
+  else
+    none
+-- #eval! String.toNat? ("bignum_123".sliceFrom ⟨⟨"bignum_".length⟩, sorry⟩).toString
+def bigNumLimit := 100
+def bigNumAbortMsg := "aborted due to bignum op"

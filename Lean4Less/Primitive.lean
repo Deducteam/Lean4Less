@@ -76,32 +76,33 @@ def checkPrimitiveDef (env : Kernel.Environment) (v : DefinitionVal) : M Bool :=
     unless ← defEq v.type (arrow nat (arrow nat nat)) do fail
     return true -- TODO
   | ``Nat.gcd => -- FIXME
-    unless not (← read).opts.kLikeReduction do return true -- will abort at translation of terms w/ large GCD computations
-    unless env.constants.contains ``Nat.mod && v.levelParams.isEmpty do fail
-    -- gcd : Nat → Nat → Nat
-    unless ← defEq v.type (arrow nat (arrow nat nat)) do fail
-    let gcd := mkApp2 v.value
-    unless ← defeq1 (gcd zero x) x do fail
-    unless ← defeq2 (gcd (succ y) x) (gcd (mod x (succ y)) (succ y)) do
-      -- let e ← TypeChecker.whnfPure (gcd (succ y) x).toPExpr v.levelParams
-      -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
-      -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
-      -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
-
-      -- let e := e.toExpr.getAppArgs[5]!
-      -- let ea := e.getAppArgs
-      -- let e := Lean.mkAppN e.getAppFn (ea.set! 0 y)
-      -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
-
-      -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
-      -- let .proj _ _ e := e.toExpr.getAppFn | unreachable!
-      -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
-      -- let ea := e.toExpr.getApp/- A -/rgs
-      -- let e := Lean.mkAppN e.toExpr.getAppFn (ea[:ea.size - 1].toArray.push (.lit (.natVal 0)))
-      -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
-      -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[3]!.toPExpr v.levelParams
-      -- dbg_trace s!"DBG[67]: Primitive.lean:85 \n\n{e}\n\n{← TypeChecker.whnfPure (gcd (mod x (succ y)) (succ y)).toPExpr v.levelParams}"
-      fail
+    return true
+    -- unless not (← read).opts.kLikeReduction do return true -- will abort at translation of terms w/ large GCD computations
+    -- unless env.constants.contains ``Nat.mod && v.levelParams.isEmpty do fail
+    -- -- gcd : Nat → Nat → Nat
+    -- unless ← defEq v.type (arrow nat (arrow nat nat)) do fail
+    -- let gcd := mkApp2 v.value
+    -- unless ← defeq1 (gcd zero x) x do fail
+    -- unless ← defeq2 (gcd (succ y) x) (gcd (mod x (succ y)) (succ y)) do
+    --   -- let e ← TypeChecker.whnfPure (gcd (succ y) x).toPExpr v.levelParams
+    --   -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
+    --   -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
+    --   -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
+    --
+    --   -- let e := e.toExpr.getAppArgs[5]!
+    --   -- let ea := e.getAppArgs
+    --   -- let e := Lean.mkAppN e.getAppFn (ea.set! 0 y)
+    --   -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
+    --
+    --   -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[5]!.toPExpr v.levelParams
+    --   -- let .proj _ _ e := e.toExpr.getAppFn | unreachable!
+    --   -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
+    --   -- let ea := e.toExpr.getApp/- A -/rgs
+    --   -- let e := Lean.mkAppN e.toExpr.getAppFn (ea[:ea.size - 1].toArray.push (.lit (.natVal 0)))
+    --   -- let e ← TypeChecker.whnfPure e.toPExpr v.levelParams
+    --   -- let e ← TypeChecker.whnfPure e.toExpr.getAppArgs[3]!.toPExpr v.levelParams
+    --   -- dbg_trace s!"DBG[67]: Primitive.lean:85 \n\n{e}\n\n{← TypeChecker.whnfPure (gcd (mod x (succ y)) (succ y)).toPExpr v.levelParams}"
+    --   fail
   | ``Nat.beq =>
     unless env.constants.contains ``Nat && env.constants.contains ``Bool && v.levelParams.isEmpty do fail
     -- beq : Nat → Nat → Bool

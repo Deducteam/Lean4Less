@@ -26,19 +26,21 @@ structure TypeChecker.State where
   fvarTypeToReusedNamePrefix : Std.HashMap Expr Name := {}
   inferTypeI : InferCacheP := {}
   inferTypeC : InferCache := {}
-  whnfCoreCache : Std.HashMap PExpr (PExpr × Option (EExpr × LocalDeclE × Option FVarId)) := {}
+  whnfCoreCache : Std.HashMap PExpr (PExpr × Option (EExpr × LocalDeclE × Option FVarId) × Nat) := {}
   -- whnfCache : Std.HashMap (PExpr × Bool) (PExpr × Option (EExpr × LocalDeclE × Option FVarId)) := {}
-  whnfCache : Std.HashMap (PExpr × Bool) (PExpr × Option (EExpr × LocalDeclE × Option FVarId)) := {}
-  isDefEqCache : Std.HashMap (PExpr × PExpr) (EExpr × LocalDeclE × Option FVarId) := Std.HashMap.emptyWithCapacity
-  isDefEqAppCache : Std.HashMap (Array PExpr × Array PExpr) (Option (EExpr × LocalDeclE × Option FVarId × Array (Option (PExpr × PExpr × EExpr)))) := {}
+  whnfCache : Std.HashMap (PExpr × Bool) (PExpr × Option (EExpr × LocalDeclE × Option FVarId) × Nat) := {}
+  isDefEqCache : Std.HashMap (PExpr × PExpr) (EExpr × LocalDeclE × Option FVarId × Nat) := Std.HashMap.emptyWithCapacity
+  isDefEqAppCache : Std.HashMap (Array PExpr × Array PExpr) (Option (EExpr × LocalDeclE × Option FVarId × Array (Option (PExpr × PExpr × EExpr))) × Nat) := {}
   exprCache : Std.HashMap PExpr (LocalDeclE × Option FVarId) := Std.HashMap.emptyWithCapacity
   fvarRegistry : Std.HashMap Name Nat := {} -- for debugging purposes
   initLets : Array LocalDeclE := {}
   fvarsToLets : Std.HashMap FVarId (Array LocalDeclE) := {}
   letsToBindVar : Std.HashMap FVarId FVarId := {}
   eqvManager : EquivManager := {}
+  eqvManagerCache : Std.HashMap (PExpr × PExpr) Nat := {}
   lctx : LocalContext := {}
   numCalls : Nat := 0
+  usedBigNum : Nat := 0
   leanMinusState : Lean.TypeChecker.State := {}
   failure : Std.HashSet (Expr × Expr) := {}
 
@@ -608,24 +610,30 @@ def mkLet (T v : PExpr) : RecM (PExpr × LocalDeclE × Option (FVarId × Nat)) :
 
 def checkIsDefEqCache (_n : Nat) (t s : PExpr) (m : RecB) : RecB := do
   if not (← readThe Context).noCache then
-    if let some (lv, decl, lastVar?) := (← get).isDefEqCache.get? (t, s) then -- TODO let var abstraction optimization
+    if let some (lv, decl, lastVar?, bns) := (← get).isDefEqCache.get? (t, s) then -- TODO let var abstraction optimization
+      modify fun s => {s with usedBigNum := s.usedBigNum + bns}
       if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
         addLVarToCtx decl lastVar?
       return (true, .some $ lv)
-    else if let some (lv, decl, lastVar?) := (← get).isDefEqCache.get? (s, t) then
+    else if let some (lv, decl, lastVar?, bns) := (← get).isDefEqCache.get? (s, t) then
+      modify fun s => {s with usedBigNum := s.usedBigNum + bns}
       if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
         addLVarToCtx decl lastVar? -- TODO add reversed let variable to context instead?
       return (true, .some $ .rev lv)
+  let usedBigNumsBefore := (← get).usedBigNum
   let (result, p?) ← m
+  let usedBigNumsAfter := (← get).usedBigNum
   let newp? ←
     if result then
-      if let some p := (← get).isDefEqCache.get? (t, s) then
-        return (result, p.1)
+      if let some (p, _, _, bns) := (← get).isDefEqCache.get? (t, s) then
+        modify fun s => {s with usedBigNum := s.usedBigNum + bns}
+        return (result, p)
       if let some p := p? then
         let (lv, decl, lastVar?) ← mkLetE t s p _n
-        modify fun st => { st with isDefEqCache := st.isDefEqCache.insert (t, s) (lv, decl, lastVar?.map (·.1))}
+        modify fun st => { st with isDefEqCache := st.isDefEqCache.insert (t, s) (lv, decl, lastVar?.map (·.1), usedBigNumsAfter - usedBigNumsBefore)}
         pure $ .some $ lv
       else
+        modify fun st => { st with eqvManagerCache := st.eqvManagerCache.insert (t, s) (usedBigNumsAfter - usedBigNumsBefore) }
         modify fun st => { st with eqvManager := st.eqvManager.addEquiv t s }
         pure none
     else
@@ -949,26 +957,30 @@ def isDefEqApp'' (tf sf : PExpr) (tArgs sArgs : Array PExpr) (targsEqsargs? : St
   (tfEqsf? : Option (Option EExpr) := none) (cache := true) : RecM (Bool × Option (EExpr × Array (Option (PExpr × PExpr × EExpr)))) := do
   let t := Lean.mkAppN tf (tArgs.map (·.toExpr)) |>.toPExpr
   let s := Lean.mkAppN sf (sArgs.map (·.toExpr)) |>.toPExpr
-  if let some p? := (← get).isDefEqAppCache.get? (#[tf] ++ tArgs, #[sf] ++ sArgs) then
+  if let some (p?, bns) := (← get).isDefEqAppCache.get? (#[tf] ++ tArgs, #[sf] ++ sArgs) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + bns}
     if let some (lv, decl, lastVar?, p) := p? then
       if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
         addLVarToCtx decl lastVar?
       return (true, .some $ (lv, p))
     else
       return (true, none)
-  else if let some p? := (← get).isDefEqAppCache.get? (#[sf] ++ sArgs, #[tf] ++ tArgs) then
+  else if let some (p?, bns) := (← get).isDefEqAppCache.get? (#[sf] ++ sArgs, #[tf] ++ tArgs) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + bns}
     if let some (lv, decl, lastVar?, p) := p? then
       if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
         addLVarToCtx decl lastVar?
       return (true, .some $ (.rev lv, p.map fun d? => d?.map fun (t, s, p) => (s, t, .rev p)))
     else
       return (true, none)
+  let usedBigNumsBefore := (← get).usedBigNum
   let (isDefEq, p?) ← App.isDefEqApp'' methsA tf sf tArgs sArgs targsEqsargs? tfEqsf?
+  let usedBigNumsAfter := (← get).usedBigNum
   if cache && isDefEq then
     let cacheData? ← p?.mapM fun (p, d) => do
       let (lv, decl, lastVar?) ← mkLetE t s p 102
       pure (lv, decl, lastVar?.map (·.1), d)
-    modify fun st => { st with isDefEqAppCache := st.isDefEqAppCache.insert (#[tf] ++ tArgs, #[sf] ++ sArgs) cacheData? }
+    modify fun st => { st with isDefEqAppCache := st.isDefEqAppCache.insert (#[tf] ++ tArgs, #[sf] ++ sArgs) (cacheData?, usedBigNumsAfter - usedBigNumsBefore) }
   pure (isDefEq, p?)
 
 -- def isDefEqApp'' (tf sf : PExpr) (tArgs sArgs : Array PExpr) (targsEqsargs? : Std.HashMap Nat (Option EExpr) := default)
@@ -1198,11 +1210,22 @@ def smartCast' (n : Nat) (tl tr e : PExpr) (p? : Option EExpr := none) : RecM ((
         throw ex
       let tl' := tl'.toPExpr
       let tr' := tr'.toPExpr
-      if nLams > 0 then
+      let usedBigNumsBefore := (← get).usedBigNum
+      let (ret, tl, tr) ← if nLams > 0 then
         let ret ← isDefEqForall tl' tr' nLams
-        pure ret
+        pure (ret, tl', tr')
       else
         let ret ← isDefEq (1000 + n) tl tr
+        pure (ret, tl, tr)
+      let usedBigNumsAfter := (← get).usedBigNum
+      if ret.1 && (usedBigNumsBefore != usedBigNumsAfter) then
+        let Tl ← inferTypePure 0 tl
+        let Tr ← inferTypePure 0 tr
+        let sort ← inferTypePure 0 Tl
+        let .sort u := (← ensureSortCorePure sort Tl).toExpr | throw $ .other "unreachable 5"
+        dbg_trace s!"DBG[36]: TypeChecker.lean:1214 {tl}\n{tr}"
+        pure (true, .some (.sry {u, A := Tl, a := tl, B := Tr, b := tr}))
+      else
         pure ret
 
   -- if let (true, some tlEqtr) := tlEqtr? then -- sanity check (TODO delete)
@@ -1492,7 +1515,15 @@ def inferType' (e : Expr) (_dbg := false) : RecPE := do
   if let some r := state.inferTypeC[e]? then
     return r
   let (r, ep?) ← match e with
-    | .lit l => pure (l.type.toPExpr, none)
+    | .lit l => 
+      match l with
+      | .natVal n =>
+          if (← readThe Context).opts.bignum && n > bigNumLimit then
+            pure (l.type.toPExpr, .some (Expr.const (getBignumAxName n) []).toPExpr)
+          else
+            pure (l.type.toPExpr, none)
+      | _ =>
+        pure (l.type.toPExpr, none)
     | .mdata _ e => inferType'  e
     -- | .mdata _ e => inferType 95 e
     | .proj s idx e =>
@@ -1638,10 +1669,15 @@ def isLetFVar (lctx : LocalContext) (fvar : FVarId) : Bool :=
 Checks if `e` has a head constant that can be delta-reduced (that is, it is a
 theorem or definition), returning its `ConstantInfo` if so.
 -/
-def isDelta (env : Kernel.Environment) (e : PExpr) (dbg := false) : Option ConstantInfo := do
+def isDelta (opts : TypeCheckerOpts) (env : Kernel.Environment) (e : PExpr) (dbg := false) : RecM (Option ConstantInfo) := do
   if let .const c _ := e.toExpr.getAppFn then
     -- if c != `L4L.eq_of_heq then -- TODO have to block all of the patch theorems?
     if let some ci := env.find? c then
+      if opts.bignum then
+        if let some num := getBignumFromAxName? c then
+          modify fun s => {s with usedBigNum := s.usedBigNum + 1}
+          -- dbg_trace s!"DBG[35]: Ext.lean:198: n={num}"
+          return .some (.defnInfo {name := c, type := .const ``Nat [], value := (Expr.lit (.natVal num)).toPExpr, levelParams := [], hints := .abbrev, safety := .safe})
       if ci.hasValue then
         return ci
       -- else
@@ -1661,34 +1697,34 @@ def isDelta (env : Kernel.Environment) (e : PExpr) (dbg := false) : Option Const
   --       dbg_trace s!"DBG[C]: TypeChecker.lean:1643 {e}"
   -- if dbg then
   --   dbg_trace s!"DBG[100]: TypeChecker.lean:1649 {e}"
-  none
+  pure none
 
 /--
 Checks if `e` has a head constant that can be delta-reduced (that is, it is a
 theorem or definition), returning its value (instantiated by level parameters)
 if so.
 -/
-def unfoldDefinitionCore (env : Kernel.Environment) (e : PExpr) : Option PExpr := do
+def unfoldDefinitionCore (opts : TypeCheckerOpts) (env : Kernel.Environment) (e : PExpr) : RecM (Option PExpr) := do
   if let .const _ ls := e.toExpr then
-    if let some d := isDelta env e then
+    if let some d ← isDelta opts env e then
       if ls.length == d.numLevelParams then
         -- can assume that any constant value added to the environment has been patched
         return d.instantiateValueLevelParams! ls |>.toPExpr
-  none
+  pure none
 
 /--
 Unfolds the definition at the head of the application `e` (or `e` itself if it
 is not an application).
 -/
-def unfoldDefinition (env : Kernel.Environment) (e : PExpr) : Option PExpr := do
+def unfoldDefinition (opts : TypeCheckerOpts) (env : Kernel.Environment) (e : PExpr) : RecM (Option PExpr) := do
   if e.toExpr.isApp then
     let f0 := e.toExpr.getAppFn
-    if let some f := unfoldDefinitionCore env f0.toPExpr then
+    if let some f ← unfoldDefinitionCore opts env f0.toPExpr then
       let rargs := e.toExpr.getAppRevArgs
       return f.toExpr.mkAppRevRange 0 rargs.size rargs |>.toPExpr
-    none
+    pure none
   else
-    unfoldDefinitionCore env e
+    unfoldDefinitionCore opts env e
 
 def reduceNative (_env : Kernel.Environment) (e : PExpr) : Except Kernel.Exception (Option (PExpr × Option EExpr)) := do
   let .app f (.const c _) := e.toExpr | return none
@@ -1714,6 +1750,8 @@ def reduceBinNatOp (op : Name) (f : Nat → Nat → Nat) (a b : PExpr) : RecM (O
   let (b', pb?) := (← whnf 37 b)
   let some v1 := natLitExt? a' | return none
   let some v2 := natLitExt? b' | return none
+  if (← readThe Context).opts.bignum && ((v1 > bigNumLimit || v2 > bigNumLimit)) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + 1}
   let nat := (Expr.const `Nat []).toPExpr
   let mut (true, appEqapp'?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
@@ -1723,10 +1761,14 @@ def reduceBinNatOp (op : Name) (f : Nat → Nat → Nat) (a b : PExpr) : RecM (O
       targsEqsargs? := targsEqsargs?.insert 1 pb?
       isDefEqApp 9901 fab fab' (targsEqsargs? := targsEqsargs?) (tfEqsf? := some none)
     | throw $ .other "reduceBinNatOp error"
-  let result := (Expr.lit <| .natVal <| f v1 v2).toPExpr
+  let res := f v1 v2
+  if (← readThe Context).opts.bignum && (res > bigNumLimit) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + 1}
+  let result := (Expr.lit <| .natVal <| res).toPExpr
   let app := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
   let app' := Lean.mkAppN (.const op []) #[a', b'] |>.toPExpr
-  let sorryProof? ← if op == `Nat.gcd && (← readThe Context).opts.kLikeReduction then
+  let sorryProof? ←
+    if op == `Nat.gcd && (← readThe Context).opts.kLikeReduction then
       dbg_trace s!"dbg: GCD used: {v1} {v2}"
       pure $ .some $ .sry {u := 1, A := nat, a := a', B := nat, b := b'}
     else 
@@ -1746,6 +1788,8 @@ def reduceBinNatPred (op : Name) (f : Nat → Nat → Bool) (a b : PExpr) : RecM
   let (b', pb?) := (← whnf 39 b)
   let some v1 := natLitExt? a' | return none
   let some v2 := natLitExt? b' | return none
+  if (← readThe Context).opts.bignum && (v1 > bigNumLimit || v2 > bigNumLimit) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + 1}
   let (true, ret?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
       let fab' := Lean.mkAppN (.const op []) #[a', b'] |>.toPExpr
@@ -1786,19 +1830,20 @@ def reduceNat (e : PExpr) : RecM (Option (PExpr × Option EExpr)) := do
     if f == ``Nat.sub then return ← reduceBinNatOp ``Nat.sub Nat.sub a.toPExpr b.toPExpr
     if f == ``Nat.mul then return ← reduceBinNatOp ``Nat.mul Nat.mul a.toPExpr b.toPExpr
     if f == ``Nat.pow then return ← reduceBinNatOp ``Nat.pow Nat.pow a.toPExpr b.toPExpr
-    if f == ``Nat.gcd then 
-      unless (← readThe Context).opts.kLikeReduction do return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
-      let (a', _) := (← whnf 36 a.toPExpr)
-      let (b', _) := (← whnf 37 b.toPExpr)
-      let abort :=
-        throw $ .other "translation aborted"
-      let some v1 := natLitExt? a' | return none
-      let some v2 := natLitExt? b' | return none
-      if v1 > 300 || v2 > 300 then
-        abort
-      -- trace s!"dbg: GCD averted: {natLitExt? (← whnf 0 a.toPExpr).1} {natLitExt? (← whnf 0 a.toPExpr).1}"
-      return none
-      -- return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
+    if f == ``Nat.gcd then return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
+    -- if f == ``Nat.gcd then 
+    --   unless (← readThe Context).opts.kLikeReduction do return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
+    --   let (a', _) := (← whnf 36 a.toPExpr)
+    --   let (b', _) := (← whnf 37 b.toPExpr)
+    --   let abort :=
+    --     throw $ .other "translation aborted"
+    --   let some v1 := natLitExt? a' | return none
+    --   let some v2 := natLitExt? b' | return none
+    --   if v1 > 300 || v2 > 300 then
+    --     abort
+    --   -- trace s!"dbg: GCD averted: {natLitExt? (← whnf 0 a.toPExpr).1} {natLitExt? (← whnf 0 a.toPExpr).1}"
+    --   return none
+    -- return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
     if f == ``Nat.mod then return ← reduceBinNatOp ``Nat.mod Nat.mod a.toPExpr b.toPExpr
     if f == ``Nat.div then return ← reduceBinNatOp ``Nat.div Nat.div a.toPExpr b.toPExpr
     if f == ``Nat.beq then return ← reduceBinNatPred ``Nat.beq Nat.beq a.toPExpr b.toPExpr
@@ -1820,9 +1865,12 @@ Otherwise, defers to the calling function.
 -/
 def quickIsDefEq' (t s : PExpr) (useHash := false) : RecLB := do
   -- optimization for terms that are already α-equivalent
-  if ← modifyGet fun (.mk a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 (eqvManager := m)) => -- TODO why do I have to list these?
+  if let some bns := (← get).eqvManagerCache.get? (t, s) then
+    modify fun s => {s with usedBigNum := s.usedBigNum + bns}
+    return (.true, none)
+  if ← modifyGet fun (.mk a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 (eqvManager := m)) => -- TODO why do I have to list these?
     let (b, m) := m.isEquiv useHash t s
-    (b, .mk a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 (eqvManager := m))
+    (b, .mk a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 a18 a19 (eqvManager := m))
   then
     return (.true, none)
   let res : Option (Bool × PExpr) ← match t.toExpr, s.toExpr with
@@ -1921,7 +1969,8 @@ private def _whnfCore' (_e : Expr) (cheapK := false) (cheapProj := false) : RecE
   | .fvar id => if !isLetFVar (← getLCtx) id then return (e, none)
   | .app .. | .letE .. | .proj .. => pure ()
   if not (← readThe Context).noCache then
-    if let some (e', eEqe'?) := (← get).whnfCoreCache.get? e then -- FIXME important to optimize this -- FIXME should this depend on cheapK?
+    if let some (e', eEqe'?, bns) := (← get).whnfCoreCache.get? e then -- FIXME important to optimize this -- FIXME should this depend on cheapK?
+      modify fun s => {s with usedBigNum := s.usedBigNum + bns}
       let eEqe'? ←
         if let some (lv, decl, lastVar?) := eEqe'? then
           if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
@@ -1930,13 +1979,15 @@ private def _whnfCore' (_e : Expr) (cheapK := false) (cheapProj := false) : RecE
         else
           pure none
       return (e', eEqe'?)
+  let usedBigNumsBefore := (← get).usedBigNum
   let rec save r := do
     let (e', p?) := r
     if !cheapK && !cheapProj then
       let cacheData? ← p?.mapM fun p => do
         let (lv, decl, lastVar?) ← mkLetE e e' p 103
         pure (lv, decl, lastVar?.map (·.1))
-      modify fun s => { s with whnfCoreCache := s.whnfCoreCache.insert e (e', cacheData?) }
+      let usedBigNumsAfter := (← get).usedBigNum
+      modify fun s => { s with whnfCoreCache := s.whnfCoreCache.insert e (e', cacheData?, usedBigNumsAfter - usedBigNumsBefore) }
       -- if cheapK && r.2.isNone then
       --   modify fun s => { s with whnfCoreCache := s.whnfCoreCache.insert e r }
     pure r
@@ -2011,7 +2062,7 @@ private def _whnfCore' (_e : Expr) (cheapK := false) (cheapProj := false) : RecE
       let eEqr'? ← appHEqTrans? e frargs' r' eEqfrargs'? frargsEqr'?
       save (r', eEqr'?)
   | .letE _ _ val body _ =>
-    save <|← whnfCore 57 (body.instantiate1 val).toPExpr cheapK cheapProj
+    save (← whnfCore 57 (body.instantiate1 val).toPExpr cheapK cheapProj)
   | .proj typeName idx s =>
     if let some (m, eEqm?) ← reduceProj typeName idx s.toPExpr cheapK cheapProj then
       let (r', mEqr'?) ← whnfCore 58 m cheapK cheapProj
@@ -2043,7 +2094,8 @@ private def _whnf' (_e : Expr) (cheapK := false) : RecEE := do
   | .lam .. | .app .. | .const .. | .letE .. | .proj .. => pure ()
   -- check cache
   if not (← readThe Context).noCache then
-    if let some (e', eEqe'?) := (← get).whnfCache.get? (e, cheapK) then
+    if let some (e', eEqe'?, bns) := (← get).whnfCache.get? (e, cheapK) then
+      modify fun s => {s with usedBigNum := s.usedBigNum + bns}
       let eEqe'? ←
         if let some (lv, decl, lastVar?) := eEqe'? then
           if not ((← getLCtx).containsFVar (Expr.fvar decl.fvarId)) then
@@ -2052,6 +2104,7 @@ private def _whnf' (_e : Expr) (cheapK := false) : RecEE := do
         else
           pure none
       return (e', eEqe'?)
+  let usedBigNumsBefore := (← get).usedBigNum
   let rec loop le eEqle?
   | 0 =>
     throw .deterministicTimeout
@@ -2061,14 +2114,15 @@ private def _whnf' (_e : Expr) (cheapK := false) : RecEE := do
     let eEqler? ← appHEqTrans? e le ler eEqle? leEqler?
     if let some (ler', lerEqler'?) ← reduceNative env ler then return (ler', ← appHEqTrans? e ler ler' eEqler? lerEqler'?)
     if let some (ler', lerEqler'?) ← reduceNat ler then return (ler', ← appHEqTrans? e ler ler' eEqler? lerEqler'?)
-    let some leru := unfoldDefinition env ler | return (ler, eEqler?)
+    let some leru ← unfoldDefinition (← readThe Context).opts env ler | return (ler, eEqler?)
     loop leru eEqler? fuel
   let r ← loop e none 1000
   let (e', p?) := r
   let cacheData? ← p?.mapM fun p => do
     let (lv, decl, lastVar?) ← mkLetE e e' p 101
     pure (lv, decl, lastVar?.map (·.1))
-  modify fun s => { s with whnfCache := s.whnfCache.insert (e, cheapK) (e', cacheData?) }
+  let usedBigNumsAfter := (← get).usedBigNum
+  modify fun s => { s with whnfCache := s.whnfCache.insert (e, cheapK) (e', cacheData?, usedBigNumsAfter - usedBigNumsBefore) }
   return r
 
 @[inherit_doc whnf]
@@ -2139,7 +2193,8 @@ def lazyDeltaReductionStep (ltn lsn : PExpr) (dbg := false) : RecM ReductionStat
   --     throw $ .other "HERE A"
   let env ← getKEnv
   let delta e := do
-    let (ne, eEqne?) ← whnfCore 63 (unfoldDefinition env e).get! (cheapK := true) (cheapProj := true)
+    let opts := (← readThe Context).opts
+    let (ne, eEqne?) ← whnfCore 63 (← unfoldDefinition opts env e).get! (cheapK := true) (cheapProj := true)
     -- if ne.toExpr.containsFVar' (.mk "_kernel_fresh.86".toName) then 
     --   dbg_trace s!"DBG[44]: TypeChecker.lean:1997 (after if ! e.toExpr.containsFVar (.mk _kernel_…)"
     --   for var in ← getLCtx do
@@ -2183,7 +2238,8 @@ def lazyDeltaReductionStep (ltn lsn : PExpr) (dbg := false) : RecM ReductionStat
     --   if not (← isDefEqPure 0 lsn nlsn) then
     --     throw $ .other s!"lazyDeltaReduction failed sanity check 6 {(← get).numCalls}"
     cont nltn nlsn pltnEqnltn? plsnEqnlsn?
-  match isDelta env ltn dbg, isDelta env lsn dbg with
+  let opts := (← readThe Context).opts
+  match ← isDelta opts env ltn dbg, ← isDelta opts env lsn dbg with
   | none, none =>
     return .notDelta
   | some _, none =>

@@ -16,7 +16,7 @@
    "name": "lean4lean",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
-   "dir": "/home/rvaishna/projects/lean4lean/",
+   "dir": "/home/rish/lean4lean/",
    "configFile": "lakefile.lean"},
   {"url": "https://github.com/leanprover-community/batteries",
    "type": "git",

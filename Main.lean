@@ -164,7 +164,8 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
   let dbgOnly : Bool := p.hasFlag "dbg-only"
   let klr : Bool := p.hasFlag "klike-red"
   let slr : Bool := p.hasFlag "slike-red"
-  let opts : Lean4Less.TypeCheckerOpts := {proofIrrelevance := pi, kLikeReduction := klr, structLikeReduction := slr}
+  let bnm : Bool := p.hasFlag "bignum"
+  let opts : Lean4Less.TypeCheckerOpts := {proofIrrelevance := pi, kLikeReduction := klr, structLikeReduction := slr, bignum := bnm}
   match mod with
     | .anonymous => throw <| IO.userError s!"Could not resolve module: {mod}"
     | m =>
@@ -313,7 +314,7 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
           pure (newEnv, aborted))
           fun aborted s => do
             let env := s.env
-            replayFromEnv Lean4Lean.addDecl m env.toKernelEnv.toMap₁ (op := "typecheck") (opts := {proofIrrelevance := not opts.proofIrrelevance, kLikeReduction := not opts.kLikeReduction})
+            replayFromEnv Lean4Lean.addDecl m env.toKernelEnv.toMap₁ (op := "typecheck") (opts := {proofIrrelevance := not opts.proofIrrelevance, kLikeReduction := not opts.kLikeReduction, bignums := not opts.bignum})
         -- forEachModule' (imports := #[m]) (init := env) fun e dn d => do
         --   -- let newConstants := d.constNames.zip d.constants |>.foldl (init := default) fun acc (n, ci) => acc.insert n ci
         --
@@ -340,6 +341,7 @@ unsafe def transCmd : Cmd := `[Cli|
     pi, "proof-irrel"; "Eliminate proof irrelevance."
     klr, "klike-red"; "Eliminate K-like reduction."
     slr, "slike-red"; "Eliminate struct-like reduction."
+    bnm, "bignum"; "Eliminate bignums."
     c, cached : String; "Use cached library translation files from specified directory."
 
   ARGS:

@@ -12,6 +12,24 @@ open private Lean.Kernel.Environment.add from Lean.Environment
 open Lean
 open Lean.Kernel.Environment
 
+def getBigNums : Expr → Std.HashSet Nat
+| .lam _ d b _ => (getBigNums d).union (getBigNums b)
+| .forallE _ d b _ => (getBigNums d).union (getBigNums b)
+| .letE _ d b v _ => (getBigNums d).union (getBigNums b) |>.union (getBigNums v)
+| .mdata _ b => getBigNums b
+| .app f a => (getBigNums f).union (getBigNums a)
+| .proj _ _ s => (getBigNums s)
+| .lit l => Id.run do
+  let mut ret := default
+  match l with
+  | .natVal n =>
+    if n > bigNumLimit then
+      ret := ret.insert n
+  | _ => pure ()
+  return ret
+| _ => default
+
+
 def checkConstantVal (env : Kernel.Environment) (v : ConstantVal) (allowPrimitive := false) : M (PExpr) := do
   env.checkName v.name allowPrimitive
   checkDuplicatedUnivParams v.levelParams
@@ -167,32 +185,84 @@ def patchMutual (env : Kernel.Environment) (vs : List DefinitionVal) (opts : Typ
       pure {v' with value}
     newvs' := newvs'.push newv'
   return newvs'.map .defnInfo |>.toList
-#print Array.eraseIdx
+
+def addBigNums (env : Kernel.Environment) (decl : @& Declaration) :
+    Except Kernel.Exception Kernel.Environment := do
+  let mut env := env
+  let mut bignums : Std.HashSet Nat := default
+  match decl with
+  | .axiomDecl v =>
+    -- let v ← patchAxiom env v opts
+    bignums := bignums.union (getBigNums v.type)
+  | .defnDecl v 
+  | .thmDecl v
+  | .opaqueDecl v =>
+    bignums := bignums.union (getBigNums v.type)
+    bignums := bignums.union (getBigNums v.value)
+  | .mutualDefnDecl vs =>
+    for v in vs do
+      bignums := bignums.union (getBigNums v.type)
+      bignums := bignums.union (getBigNums v.value)
+  | .quotDecl =>
+    pure ()
+  | .inductDecl lparams nparams types isUnsafe =>
+    pure () -- FIXME
+  for num in bignums do
+    let axName : Name := getBignumAxName num
+    let ax : AxiomVal := {name := axName, levelParams := [], type := Expr.const ``Nat [], isUnsafe := false}
+    if not (env.constants.contains axName) then
+      env := env.add (.axiomInfo ax)
+    -- let allowPrimitive ← checkPrimitiveInductive env lparams nparams types isUnsafe opts
+    -- env ← addInductive env lparams nparams types isUnsafe allowPrimitive -- TODO handle any possible patching in inductive type declarations (low priority)
+  pure env
+
+def addDeclOrGenerateAx (m : Except Kernel.Exception ConstantInfo) (opts : TypeCheckerOpts) (type : Expr) (name : Name) (levelParams : List Name) : Except Kernel.Exception ConstantInfo := do
+  let v ←
+    try
+      m
+    catch e => 
+      if opts.bignum then
+        if let .other m := e then
+          if m == bigNumAbortMsg then
+            dbg_trace s!"axiomatized: {name}"
+            pure (.axiomInfo {type, isUnsafe := false, name, levelParams})
+          else
+            throw e
+        else
+          throw e
+      else
+        throw e
+
 
 /-- Type check given declaration and add it to the environment -/
 def addDecl' (env : Kernel.Environment) (decl : @& Declaration) (opts : TypeCheckerOpts := {}) (allowAxiomReplace := false) :
     Except Kernel.Exception Kernel.Environment := do
   -- let env := env.toStage₁
+  let mut env := env
+  if opts.bignum then
+    env ← addBigNums env decl
   match decl with
   | .axiomDecl v =>
-    let v ← patchAxiom env v opts
-    return env.add v
+      let v ← addDeclOrGenerateAx (patchAxiom env v opts) opts v.type v.name v.levelParams
+      return env.add v
   | .defnDecl v =>
-    let v ← patchDefinition env v false opts
+    let v ← addDeclOrGenerateAx (patchDefinition env v false opts) opts v.type v.name v.levelParams
     return env.add v
   | .thmDecl v =>
     -- if v.name == ``Array.eraseIdx._unary.induct then
     --   dbg_trace s!"DBG[62]: Environment.lean:185 (after sorry)"
-    let v ← patchTheorem env v false opts
+    let v ← addDeclOrGenerateAx (patchTheorem env v false opts) opts v.type v.name v.levelParams
     return env.add v
   | .opaqueDecl v =>
-    let v ← patchOpaque env v opts
+    let v ← addDeclOrGenerateAx (patchOpaque env v opts) opts v.type v.name v.levelParams
     return env.add v
   | .mutualDefnDecl vs =>
+    -- FIXME FIXME generate axioms?
     let vs ← patchMutual env vs opts
     return vs.foldl (init := env) (fun env v => env.add v)
   | .quotDecl =>
     addQuot env
   | .inductDecl lparams nparams types isUnsafe =>
+    -- FIXME FIXME generate axioms?
     let allowPrimitive ← checkPrimitiveInductive env lparams nparams types isUnsafe opts
     addInductive env lparams nparams types isUnsafe allowPrimitive -- TODO handle any possible patching in inductive type declarations (low priority)
