@@ -25,6 +25,8 @@ def addDecl (d : Declaration) (opts : TypeCheckerOpts := {}) : M Unit := do
     match ex with
     | .other "translation aborted" =>
       throw $ .otherError 165846 "translation aborted"
+    | .other "large nat prim op" =>
+      throw $ .otherError 165847 "large nat prim op"
     | _ =>
       throwKernelException ex
 

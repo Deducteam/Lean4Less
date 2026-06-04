@@ -155,7 +155,7 @@ match fuel with
       --     pure ()
       --   | _ => unreachable!
         -- isDefEqLean 
-      if let .other "translation aborted" := e then
+      if (e matches .other "translation aborted") || (e matches .other "large nat prim op") then
         pure ()
       else
         dbg_trace s!"err calltrace {s.numCalls}: {(← readThe Context).callStack.map (·.1)}, {idx}"

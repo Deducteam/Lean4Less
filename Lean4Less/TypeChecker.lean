@@ -1687,6 +1687,14 @@ def reduceNative (_env : Kernel.Environment) (e : PExpr) : Except KernelExceptio
 def natLitExt? (e : Expr) : Option Nat := if e == .natZero then some 0 else e.rawNatLit?
 
 /--
+  Threshold above which a primitive `Nat` operation result/operand is deemed infeasible to
+  re-check in Dedukti (which lacks native `Nat` arithmetic and would expand the value into a
+  unary `Nat.succ` chain). Constants whose kernel check performs such an operation are aborted
+  here and stubbed in the lean2dk output.
+-/
+def natPrimOpStubThreshold : Nat := 65536
+
+/--
 Reduces the application `f a b` to a Nat literal if `a` and `b` can be reduced
 to Nat literals.
 
@@ -1697,6 +1705,10 @@ def reduceBinNatOp (op : Name) (f : Nat → Nat → Nat) (a b : PExpr) : RecM (O
   let (b', pb?) := (← whnf 37 b)
   let some v1 := natLitExt? a' | return none
   let some v2 := natLitExt? b' | return none
+  -- Dedukti has no primitive `Nat` arithmetic, so it would reduce a result this large to an
+  -- infeasible unary `Nat.succ` chain (e.g. `UInt32.size = 2^32`). Abort here so the enclosing
+  -- constant is recorded as aborted and stubbed (declared without its rewrite rule) in the output.
+  if f v1 v2 > natPrimOpStubThreshold then throw $ .other "large nat prim op"
   let nat := (Expr.const `Nat []).toPExpr
   let mut (true, appEqapp'?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
@@ -1729,6 +1741,8 @@ def reduceBinNatPred (op : Name) (f : Nat → Nat → Bool) (a b : PExpr) : RecM
   let (b', pb?) := (← whnf 39 b)
   let some v1 := natLitExt? a' | return none
   let some v2 := natLitExt? b' | return none
+  -- See `reduceBinNatOp`: a comparison on operands this large is infeasible for Dedukti.
+  if v1 > natPrimOpStubThreshold || v2 > natPrimOpStubThreshold then throw $ .other "large nat prim op"
   let (true, ret?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
       let fab' := Lean.mkAppN (.const op []) #[a', b'] |>.toPExpr
