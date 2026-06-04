@@ -16,7 +16,12 @@ def checkConstantVal (env : Kernel.Environment) (v : ConstantVal) (allowPrimitiv
   env.checkName v.name allowPrimitive
   checkDuplicatedUnivParams v.levelParams
   checkNoMVarNoFVar env v.name v.type
-  let (typeType, type'?) ← check v.type v.levelParams
+  -- Re-label an infeasible primitive Nat op encountered while checking the *type* so lean2dk
+  -- can distinguish type-infeasible constants (whose declared type is itself unusable in Dedukti)
+  -- from value-infeasible ones (whose type is fine and only the body/rule need stubbing).
+  let (typeType, type'?) ← try check v.type v.levelParams catch
+    | .other "large nat prim op" => throw (.other "large nat prim op type")
+    | e => throw e
   let type' := type'?.getD v.type.toPExpr
   let (sort, typeTypeEqSort?) ← ensureSort typeType v.levelParams type'
   let type'' ← maybeCast typeTypeEqSort? typeType sort type' v.levelParams
