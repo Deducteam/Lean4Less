@@ -101,6 +101,7 @@ structure TypeCheckerOpts where
   proofIrrelevance := true
   kLikeReduction := true
   structLikeReduction := true
+  unitEta := true
 
 inductive CallData where
 |  isDefEqCore : PExpr → PExpr → CallData

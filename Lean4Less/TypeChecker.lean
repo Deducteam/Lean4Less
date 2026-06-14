@@ -2324,13 +2324,41 @@ with one constructor without any fields or indices).
 -- because any two instances of a unit type must be definitionally equal to a constructor application
 def isDefEqUnitLike (t s : PExpr) : RecB := do
   let tType ← whnfPure 70 (← inferTypePure 71 t)
-  let .const I _ := tType.toExpr.getAppFn | return (false, none)
+  let .const I lvls := tType.toExpr.getAppFn | return (false, none)
   let env ← getKEnv
   let .inductInfo { isRec := false, ctors := [c], numIndices := 0, .. } ← env.get I
     | return (false, none)
   let .ctorInfo { numFields := 0, .. } ← env.get c | return (false, none)
   if ← isDefEqCorePure 72 tType (← inferTypePure 73 s) then
-    return (true, none)
+    unless (← readThe Context).opts.unitEta do
+      return (true, none)
+    -- Eliminate unit-eta: `t ≡ s` holds only because `I` is a unit type (single 0-field
+    -- constructor). Emit an explicit `HEq t s` proof, proven by elimination on `I`:
+    --   unitEta x : x = I.mk ps := @I.rec ps (fun y => y = I.mk ps) rfl x
+    --   HEq t s := heq_of_eq ((unitEta t).trans (unitEta s).symm)
+    let .sort u := (← whnfPure 170 (← inferTypePure 171 tType)).toExpr
+      | return (true, none)
+    let Iapp := tType.toExpr
+    let params := Iapp.getAppArgs
+    let mkApp := Lean.mkAppN (.const c lvls) params       -- I.mk ps : Iapp
+    -- recursor level args: a leading motive universe (Prop = 0 here) then I's levels
+    let .recInfo recVal ← env.get (.str I "rec") | return (true, none)
+    let recLvls := if recVal.levelParams.length == lvls.length + 1
+      then Level.zero :: lvls else lvls
+    let motive := Expr.lam `x Iapp
+      (Lean.mkApp3 (.const ``Eq [u]) (Iapp.liftLooseBVars 0 1) (.bvar 0) (mkApp.liftLooseBVars 0 1))
+      .default
+    let minor := Lean.mkApp2 (.const ``Eq.refl [u]) Iapp mkApp   -- I.mk ps = I.mk ps
+    let unitEta (x : Expr) : Expr :=                              -- x = I.mk ps
+      Lean.mkAppN (.const (.str I "rec") recLvls) (params ++ #[motive, minor, x])
+    let te := t.toExpr; let se := s.toExpr
+    -- HEq t s := (heq_of_eq (unitEta t) : HEq t mk).trans ((heq_of_eq (unitEta s)).symm : HEq mk s)
+    -- (built from HEq combinators, which — unlike Eq.symm/Eq.trans — are in `patchConsts`.)
+    let heqT := Lean.mkAppN (.const ``heq_of_eq [u]) #[Iapp, te, mkApp, unitEta te]   -- HEq t mk
+    let heqS := Lean.mkAppN (.const ``heq_of_eq [u]) #[Iapp, se, mkApp, unitEta se]   -- HEq s mk
+    let heqMkS := Lean.mkAppN (.const ``HEq.symm [u]) #[Iapp, Iapp, se, mkApp, heqS]  -- HEq mk s
+    let heq := Lean.mkAppN (.const ``HEq.trans [u]) #[Iapp, Iapp, Iapp, te, mkApp, se, heqT, heqMkS] -- HEq t s
+    return (true, some (.unitEta {u, A := tType, a := t, b := s, proof := heq.toPExpr}))
   else
     return (false, none)
 

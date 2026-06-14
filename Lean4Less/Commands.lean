@@ -79,6 +79,7 @@ def patchConsts : Array Name := #[
 `L4L.forallEqUV',
 `L4L.appArgEq,
 `eq_of_heq,
+`heq_of_eq,
 `cast,
 `L4L.HEqRefl,
 `L4L.castHEq,

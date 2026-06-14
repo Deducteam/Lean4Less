@@ -87,6 +87,18 @@ B    : PExpr
 b    : PExpr
 deriving Inhabited, Hashable, BEq
 
+/-- A proof of `HEq a b` (both `: A`) witnessing the elimination of *unit-eta*: when the
+    kernel would use `a ≡ b` because they inhabit a unit type (single 0-field constructor),
+    we record an explicit proof instead. `proof` is the inlined `@I.rec`-based term built in
+    `isDefEqUnitLike`. -/
+structure UnitEtaData where
+u     : Level
+A     : PExpr
+a     : PExpr
+b     : PExpr
+proof : PExpr
+deriving Inhabited, Hashable, BEq
+
 structure CastData (EExpr : Type) where
 u    : Level
 A    : PExpr
@@ -381,6 +393,7 @@ inductive EExpr where
 | lvar     : LVarDataE → EExpr
 | prfIrrel : PIData EExpr → EExpr
 | sry      : SorryData → EExpr
+| unitEta  : UnitEtaData → EExpr
 | cast     : CastData EExpr → EExpr
 | rev      : EExpr → EExpr -- "thunked" equality reversal
 with
@@ -396,6 +409,7 @@ with
   | .lvar d => d.usedLets
   | .refl _ => default
   | .sry _  => default
+  | .unitEta _ => default
   | .cast _ => default
 -- with
 --   @[computed_field]
@@ -1188,6 +1202,14 @@ def SorryData.toExpr : SorryData → EM Expr
   else
     pure $ Lean.mkAppN (.const `sorryAx [0]) #[Lean.mkAppN (.const ``HEq [u]) #[A, a, B, b], .const `Bool.false []]
 
+def UnitEtaData.toExpr : UnitEtaData → EM Expr
+| {u, A, a, b, proof} => do
+  -- `proof : HEq a b`; emit it directly (or its symm under reversal).
+  if (← rev) then
+    pure $ Lean.mkAppN (.const ``HEq.symm [u]) #[A, A, a, b, proof]
+  else
+    pure proof.toExpr
+
 def CastData.toExpr : CastData EExpr → EM Expr
 | {u, A, B, e, p} => do
   if (← rev) then
@@ -1205,6 +1227,7 @@ def EExpr.ctorName : EExpr → Name
   | .refl .. => `refl
   | .prfIrrel .. => `prfIrrel
   | .sry .. => `sry
+  | .unitEta .. => `unitEta
   | .cast .. => `cast
   | .rev .. => `rev
 
@@ -1223,6 +1246,7 @@ def EExpr.toExpr' (e : EExpr) : EM Expr :=
   | .refl d
   | .prfIrrel d
   | .sry d
+  | .unitEta d
   | .cast d => d.toExpr
   | .rev e => do
     let ret ← (swapRev e.toExpr')
