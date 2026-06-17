@@ -7,7 +7,7 @@ require batteries from git "https://github.com/leanprover-community/batteries" @
 
 -- require lean4lean from "/home/rish/lean4lean/"
 
-require lean4lean from git "https://github.com/rish987/lean4lean" @ "stable"
+require lean4lean from git "https://github.com/rish987/lean4lean" @ "claude-stable"
 
 require Cli from git
   "https://github.com/leanprover/lean4-cli" @ "v4.18.0-rc1"

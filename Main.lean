@@ -104,7 +104,9 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
   let dbgOnly : Bool := p.hasFlag "dbg-only"
   let klr : Bool := p.hasFlag "klike-red"
   let slr : Bool := p.hasFlag "slike-red"
-  let opts : Lean4Less.TypeCheckerOpts := {proofIrrelevance := pi, kLikeReduction := klr, structLikeReduction := slr}
+  let ue : Bool := p.hasFlag "unit-eta"
+  let stub : Bool := p.hasFlag "stub"
+  let opts : Lean4Less.TypeCheckerOpts := {proofIrrelevance := pi, kLikeReduction := klr, structLikeReduction := slr, unitEta := ue, stubInfeasibleNatOps := stub}
   match mod with
     | .anonymous => throw <| IO.userError s!"Could not resolve module: {mod}"
     | m =>
@@ -160,7 +162,7 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
 
         IO.println s!">>init module"
         let patchConsts ← getDepConstsEnv lemmEnv Lean4Less.patchConsts overrides
-        let (kenv, aborted) ← replay (Lean4Less.addDecl (opts := opts)) {newConstants := patchConsts, opts := {}, overrides} (← mkEmptyEnvironment).toKernelEnv (printProgress := true) (op := "patch") (aborted := aborted)
+        let (kenv, aborted, _, _) ← replay (Lean4Less.addDecl (opts := opts)) {newConstants := patchConsts, opts := {}, overrides} (← mkEmptyEnvironment).toKernelEnv (printProgress := true) (op := "patch") (aborted := aborted)
         let env := updateBaseAfterKernelAdd lemmEnv kenv
         mkMod #[] env patchPreludeModName aborted
         
@@ -211,7 +213,7 @@ unsafe def runTransCmd (p : Parsed) : IO UInt32 := do
               else
                 pure $ (accNewConstants, accOverrides)
             IO.println s!">>{dn} module [{(← get).count}/{numMods}]"
-            let (kenv, aborted) ← replay (Lean4Less.addDecl (opts := opts)) {newConstants := newConstants, opts := {}, overrides} (← get).env.toKernelEnv (printProgress := true) (op := "patch") (aborted := aborted)
+            let (kenv, aborted, _, _) ← replay (Lean4Less.addDecl (opts := opts)) {newConstants := newConstants, opts := {}, overrides} (← get).env.toKernelEnv (printProgress := true) (op := "patch") (aborted := aborted)
             let imports := if dn == `Init.Prelude then
                 #[{module := patchPreludeModName}] ++ d.imports
               else
@@ -246,6 +248,8 @@ unsafe def transCmd : Cmd := `[Cli|
     pi, "proof-irrel"; "Eliminate proof irrelevance."
     klr, "klike-red"; "Eliminate K-like reduction."
     slr, "slike-red"; "Eliminate struct-like reduction."
+    ue, "unit-eta"; "Eliminate unit-eta."
+    st, "stub"; "Stub constants requiring infeasible primitive Nat ops (as in the lean2dk/Dedukti translation)."
     c, cached : String; "Use cached library translation files from specified directory."
 
   ARGS:
