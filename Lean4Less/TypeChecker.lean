@@ -1708,7 +1708,8 @@ def reduceBinNatOp (op : Name) (f : Nat → Nat → Nat) (a b : PExpr) : RecM (O
   -- Dedukti has no primitive `Nat` arithmetic, so it would reduce a result this large to an
   -- infeasible unary `Nat.succ` chain (e.g. `UInt32.size = 2^32`). Abort here so the enclosing
   -- constant is recorded as aborted and stubbed (declared without its rewrite rule) in the output.
-  if f v1 v2 > natPrimOpStubThreshold then throw $ .other "large nat prim op"
+  -- (Only for lean2dk's Dedukti stubbing; a pure Lean⁻ check computes these natively.)
+  if (← readThe Context).opts.stubInfeasibleNatOps && f v1 v2 > natPrimOpStubThreshold then throw $ .other "large nat prim op"
   let nat := (Expr.const `Nat []).toPExpr
   let mut (true, appEqapp'?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
@@ -1721,10 +1722,21 @@ def reduceBinNatOp (op : Name) (f : Nat → Nat → Nat) (a b : PExpr) : RecM (O
   let result := (Expr.lit <| .natVal <| f v1 v2).toPExpr
   let app := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
   let app' := Lean.mkAppN (.const op []) #[a', b'] |>.toPExpr
-  let sorryProof? ← if op == `Nat.gcd && (← readThe Context).opts.kLikeReduction then
+  -- For a pure Lean⁻ check the host kernel reduces `Nat.gcd` natively, so `app' ≡ result` holds
+  -- definitionally (as for `add`/`mul`, which pass `none` here) — no proof term is needed.
+  --
+  -- TODO(gcd-dedukti): this `.sry` branch is intended for lean2dk/Dedukti (where `Nat.gcd` does
+  -- NOT reduce natively and the reduction must be justified by an explicit term). But it is
+  -- currently UNREACHABLE: the lean2dk path (`stubInfeasibleNatOps && kLikeReduction`) routes
+  -- `gcd` through the abort/leave-unreduced branch in `reduceNat` and never calls
+  -- `reduceBinNatOp` for it. So Dedukti presently handles `gcd` by *stubbing*, not by this proof.
+  -- The `.sry` here was also previously ill-typed (`HEq a' b'` instead of `HEq app' result`);
+  -- fixed below, but the whole approach (sorry vs. a real gcd-reduction proof for Dedukti) is
+  -- unresolved and should be revisited when wiring up sound `gcd` reduction for Dedukti.
+  let sorryProof? ← if op == `Nat.gcd && (← readThe Context).opts.kLikeReduction && (← readThe Context).opts.stubInfeasibleNatOps then
       dbg_trace s!"dbg: GCD used: {v1} {v2}"
-      pure $ .some $ .sry {u := 1, A := nat, a := a', B := nat, b := b'}
-    else 
+      pure $ .some $ .sry {u := 1, A := nat, a := app', B := nat, b := result}
+    else
       pure none
   let ret? ← appHEqTrans? app app' result appEqapp'? sorryProof?
 
@@ -1742,7 +1754,7 @@ def reduceBinNatPred (op : Name) (f : Nat → Nat → Bool) (a b : PExpr) : RecM
   let some v1 := natLitExt? a' | return none
   let some v2 := natLitExt? b' | return none
   -- See `reduceBinNatOp`: a comparison on operands this large is infeasible for Dedukti.
-  if v1 > natPrimOpStubThreshold || v2 > natPrimOpStubThreshold then throw $ .other "large nat prim op"
+  if (← readThe Context).opts.stubInfeasibleNatOps && (v1 > natPrimOpStubThreshold || v2 > natPrimOpStubThreshold) then throw $ .other "large nat prim op"
   let (true, ret?) ← do
       let fab := Lean.mkAppN (.const op []) #[a, b] |>.toPExpr
       let fab' := Lean.mkAppN (.const op []) #[a', b'] |>.toPExpr
@@ -1783,8 +1795,10 @@ def reduceNat (e : PExpr) : RecM (Option (PExpr × Option EExpr)) := do
     if f == ``Nat.sub then return ← reduceBinNatOp ``Nat.sub Nat.sub a.toPExpr b.toPExpr
     if f == ``Nat.mul then return ← reduceBinNatOp ``Nat.mul Nat.mul a.toPExpr b.toPExpr
     if f == ``Nat.pow then return ← reduceBinNatOp ``Nat.pow Nat.pow a.toPExpr b.toPExpr
-    if f == ``Nat.gcd then 
+    if f == ``Nat.gcd then
       unless (← readThe Context).opts.kLikeReduction do return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
+      -- For a pure Lean⁻ check (no Dedukti stubbing) the host kernel computes GCD natively.
+      unless (← readThe Context).opts.stubInfeasibleNatOps do return ← reduceBinNatOp ``Nat.gcd Nat.gcd a.toPExpr b.toPExpr
       let (a', _) := (← whnf 36 a.toPExpr)
       let (b', _) := (← whnf 37 b.toPExpr)
       let abort :=

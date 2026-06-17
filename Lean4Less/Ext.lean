@@ -102,6 +102,14 @@ structure TypeCheckerOpts where
   kLikeReduction := true
   structLikeReduction := true
   unitEta := true
+  /--
+  When `true`, abort (for later stubbing) on primitive `Nat` operations whose
+  result/operands exceed `natPrimOpStubThreshold`. This is a lean2dk/Dedukti
+  concern (Dedukti has no native `Nat` arithmetic and would expand such values
+  into infeasible unary `Nat.succ` chains). For a pure Lean⁻ check the host
+  kernel computes these natively, so this defaults to `false`.
+  -/
+  stubInfeasibleNatOps := false
 
 inductive CallData where
 |  isDefEqCore : PExpr → PExpr → CallData
